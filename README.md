@@ -27,3 +27,4 @@ python app.py 5001
 
 ## Docs
 - [Integration Plan](APRILTAG_GIMBAL_COMPENSATION_PLAN.md)
+- [Logic and Math](LOGIC_AND_MATH.md) — coordinate systems, formulas, tracking, mapping, radar viz

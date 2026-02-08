@@ -120,7 +120,15 @@
     </div>
   </div>
 
-  <div class="panel logs-collapsed" id="logPanelSection">
+  <div class="panel panel-full-width">
+    <h2>AprilTag stats</h2>
+    <div id="apriltagThreeValues" style="padding:6px 8px;font-size:0.8rem;color:var(--muted);margin-bottom:6px;background:#0d1117;border-radius:6px;font-family:monospace;">
+      1. Gyro: —° &nbsp; 2. Gimbal: —° &nbsp; 3. Tag: — &nbsp; 4. In view: —
+    </div>
+    <div id="streamStats" class="stream-stats" style="padding:8px;font-size:1rem;font-weight:700;color:#fff;background:#1a1f26;border-radius:6px;"></div>
+  </div>
+
+  <div class="panel panel-full-width logs-collapsed" id="logPanelSection">
     <div class="collapse-toggle" id="logPanelToggle" title="Click to expand/collapse">
       <span class="collapse-chevron">▼</span>
       <h2 style="margin:0;">Backend logs</h2>
@@ -128,14 +136,6 @@
     <div id="logPanelWrap" class="log-panel-wrap">
       <div id="logPanel" class="log-panel"></div>
     </div>
-  </div>
-
-  <div class="panel panel-full-width">
-    <h2>AprilTag stats</h2>
-    <div id="apriltagThreeValues" style="padding:6px 8px;font-size:0.8rem;color:var(--muted);margin-bottom:6px;background:#0d1117;border-radius:6px;font-family:monospace;">
-      1. Gyro: —° &nbsp; 2. Gimbal: —° &nbsp; 3. Tag: — &nbsp; 4. In view: —
-    </div>
-    <div id="streamStats" class="stream-stats" style="padding:8px;font-size:1rem;font-weight:700;color:#fff;background:#1a1f26;border-radius:6px;"></div>
   </div>
 
   <script>
