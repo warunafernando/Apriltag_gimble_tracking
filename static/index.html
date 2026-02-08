@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gimbal AprilTag Vision</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.4/socket.io.min.js"></script>
+  <style>
+    :root { --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --ok: #3fb950; --err: #f85149; }
+    * { box-sizing: border-box; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 12px; min-height: 100vh; }
+    h1 { font-size: 1.2rem; margin: 0 0 12px 0; color: var(--accent); }
+    .panel { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; max-width: 520px; }
+    .panel.panel-full-width { max-width: 1040px; }
+    .panels-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 12px; }
+    .panels-row .panel { flex: 1; min-width: 200px; margin-bottom: 0; }
+    .top-row .panel { min-width: 180px; }
+    .panel h2 { font-size: 0.7rem; margin: 0 0 8px 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--err); }
+    .dot.connected { background: var(--ok); }
+    input[type="text"], input[type="number"] { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 8px; border-radius: 6px; font-size: 0.85rem; }
+    button { background: var(--accent); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    button:hover { filter: brightness(1.1); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.danger { background: var(--err); }
+    button.active { background: var(--ok); }
+    .connections-panel { max-width: 1040px; }
+    .connections-header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .connections-panel h2 { font-size: 0.625rem; margin: 0; }
+    .connections-inner { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    .connections-block { display: flex; flex-direction: column; gap: 4px; }
+    .connections-label { font-size: 0.55rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .connections-panel .connections-row { font-size: 0.625rem; gap: 8px; align-items: center; }
+    .connections-panel .dot { width: 6px; height: 6px; }
+    .connections-panel button { padding: 4px 8px; font-size: 0.625rem; border-radius: 4px; }
+    .connections-fps { font-size: 0.625rem; color: var(--muted); }
+    /* Circular viz (radar) */
+    .map-stream-panel { max-width: 1040px; }
+    .viz-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+    .radar-wrap { position: relative; width: 352px; height: 352px; }
+    #radarCanvas { display: block; border-radius: 50%; background: rgba(13,17,23,0.9); border: 2px solid var(--border); width: 352px; height: 352px; }
+    .stream-column { display: flex; flex-direction: column; flex: 1; min-width: 200px; max-width: 640px; }
+    .stream-wrap { min-height: 360px; height: 360px; background: #000; border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+    .stream-buttons { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+    .stream-wrap img { width: 100%; height: auto; display: block; }
+    .stream-placeholder { width: 100%; aspect-ratio: 16/10; background: var(--card); color: var(--muted); display: flex; align-items: center; justify-content: center; font-size: 0.8rem; }
+    #streamImg, #streamFrame { width: 100%; }
+    .scan-row { margin-top: 8px; }
+    .radar-legend { font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
+    .radar-legend span { margin-right: 10px; }
+    .radar-legend .red { color: #f85149; }
+    .radar-legend .blue { color: #58a6ff; }
+    .radar-legend .green { color: #3fb950; }
+    .map-direction { font-size: 0.8rem; margin-top: 4px; color: var(--text); }
+    .log-panel { max-height: 180px; overflow-y: auto; font-family: monospace; font-size: 0.7rem; line-height: 1.4; }
+    .log-panel .log-line { padding: 2px 4px; border-bottom: 1px solid rgba(48,54,61,0.5); }
+    .log-panel .log-line.error { color: var(--err); }
+    .log-panel .log-line.warn { color: #d29922; }
+    .log-panel .log-line.info { color: var(--muted); }
+    .panel.logs-collapsed .log-panel-wrap { display: none; }
+    .panel.logs-collapsed .collapse-chevron { transform: rotate(-90deg); }
+    .collapse-toggle { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+    .collapse-toggle:hover { color: var(--accent); }
+    .collapse-chevron { font-size: 0.6rem; transition: transform 0.15s; }
+  </style>
+</head>
+<body>
+  <h1>Gimbal AprilTag Vision</h1>
+
+  <div class="panels-row top-row">
+    <div class="panel connections-panel">
+      <div class="connections-header">
+        <h2>Connections</h2>
+        <button id="btnRestartBackend" class="danger">Restart backend</button>
+        <div class="connections-block">
+          <span class="connections-label">Serial</span>
+          <div class="row connections-row">
+            <span class="dot" id="dot"></span>
+            <span id="statusText">Disconnected</span>
+            <button id="btnReconnect" class="danger">Reconnect</button>
+          </div>
+        </div>
+        <div class="connections-block">
+          <span class="connections-label">Camera</span>
+          <div class="row connections-row">
+            <span class="dot" id="camDot"></span>
+            <span id="camStatus">Disconnected</span>
+            <span id="camResFps" class="connections-fps"></span>
+            <button id="btnStartCam">Connect</button>
+            <button id="btnStopCam" class="danger" style="display:none">Disconnect</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panels-row">
+    <div class="panel map-stream-panel">
+      <h2>Map &amp; Stream</h2>
+      <div class="viz-row">
+        <div class="radar-wrap">
+          <canvas id="radarCanvas" width="352" height="352"></canvas>
+          <div class="radar-legend" id="radarLegend"><span class="red">—</span> Camera center <span class="blue">▸</span> FOV <span id="fovLegendDeg">66</span>° <span class="green">●</span> In view <span style="color:#d29922">●</span> Out of view</div>
+          <div id="fovCalibStatus" class="fov-calib-status" style="margin-top:4px;font-size:0.7rem;color:var(--muted);"></div>
+          <div id="fovCalibResult" class="fov-calib-result" style="margin-top:2px;font-size:0.75rem;color:var(--ok);"></div>
+        </div>
+        <div class="stream-column">
+          <div class="stream-wrap">
+            <iframe id="streamFrame" style="display:none; flex:1; min-height:280px; width:100%; border:none; background:#000;" title="Camera stream"></iframe>
+            <img id="streamImg" alt="Camera stream" style="display:none; flex:1; min-height:280px; width:100%; object-fit:contain; background:#000;" />
+            <div id="streamPlaceholder" class="stream-placeholder">Connecting camera…</div>
+          </div>
+          <div class="stream-buttons">
+            <button type="button" id="btnHome" style="padding:4px 8px;font-size:0.75rem;">Home</button>
+            <button type="button" id="btnTrackTag" style="padding:4px 8px;font-size:0.75rem;" title="Pan gimbal to keep tag in view when robot rotates.">Keep in view</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel logs-collapsed" id="logPanelSection">
+    <div class="collapse-toggle" id="logPanelToggle" title="Click to expand/collapse">
+      <span class="collapse-chevron">▼</span>
+      <h2 style="margin:0;">Backend logs</h2>
+    </div>
+    <div id="logPanelWrap" class="log-panel-wrap">
+      <div id="logPanel" class="log-panel"></div>
+    </div>
+  </div>
+
+  <div class="panel panel-full-width">
+    <h2>AprilTag stats</h2>
+    <div id="apriltagThreeValues" style="padding:6px 8px;font-size:0.8rem;color:var(--muted);margin-bottom:6px;background:#0d1117;border-radius:6px;font-family:monospace;">
+      1. Gyro: —° &nbsp; 2. Gimbal: —° &nbsp; 3. Tag: — &nbsp; 4. In view: —
+    </div>
+    <div id="streamStats" class="stream-stats" style="padding:8px;font-size:1rem;font-weight:700;color:#fff;background:#1a1f26;border-radius:6px;"></div>
+  </div>
+
+  <script>
+    const dot = document.getElementById('dot');
+    const statusText = document.getElementById('statusText');
+    const panSlider = document.getElementById('panSlider');
+    const tiltSlider = document.getElementById('tiltSlider');
+    const panVal = document.getElementById('panVal');
+    const tiltVal = document.getElementById('tiltVal');
+    const radarCanvas = document.getElementById('radarCanvas');
+    const streamImg = document.getElementById('streamImg');
+    const streamFrame = document.getElementById('streamFrame');
+    const streamPlaceholder = document.getElementById('streamPlaceholder');
+    const camDot = document.getElementById('camDot');
+    const camStatus = document.getElementById('camStatus');
+    const camResFps = document.getElementById('camResFps');
+    const btnStartCam = document.getElementById('btnStartCam');
+    const btnStopCam = document.getElementById('btnStopCam');
+    const mapDirection = document.getElementById('mapDirection');
+    const streamTags = document.getElementById('streamTags');
+    const logPanel = document.getElementById('logPanel');
+
+    function appendLog(entry) {
+      const div = document.createElement('div');
+      div.className = 'log-line ' + (entry.level || 'info');
+      div.textContent = '[' + (entry.ts || '') + '] ' + (entry.msg || '');
+      logPanel.appendChild(div);
+      logPanel.scrollTop = logPanel.scrollHeight;
+    }
+    const logPanelSection = document.getElementById('logPanelSection');
+    document.getElementById('logPanelToggle').addEventListener('click', () => {
+      logPanelSection.classList.toggle('logs-collapsed');
+    });
+
+    let smoothedHeading = null;
+    let compassDeg = 0;
+    let gimbalPan = 0;
+    let gimbalTilt = 42;
+    let tagAzimuths = {};
+    let liveTags = [];
+    let tagPositionCache = {};  // tag_id -> { azimuth, inView, width_px } – stable positions, green/yellow, box size
+    let cameraFov = 66;  // horizontal FOV (calibrated); from backend on connect
+    let autoConnectAttempted = false;
+    const NORTH_MARKER_TAG_ID = 3;   // tag used for North and Keep in view
+    let gyroCalOffset = 0;           // when tag visible: calibrate so heading 0 = tag direction; never reset when tag lost
+    let northTagAzimuthForDisplay = null;  // smoothed tag azimuth for radar North; keep last when tag lost (no jump)
+    const TRACK_PAN_SIGN = 1;        // -1 if gimbal pans opposite to keep tag centered
+    const TRACK_PAN_ZERO_OFFSET = 0; // degrees: add to pan so view center matches (if pan=0 is off)
+    let trackTagEnabled = false;
+    let trackTagIntervalId = null;
+    let trackTagLockedAzimuth = null;  // world azimuth of tag when we locked it (never use live az after)
+    let trackTagScanning = false;
+    let trackTagScanIndex = 0;
+    let trackTagScanPositions = [];
+
+    function blendAngle(a, b, t) {
+      let d = b - a;
+      if (d > 180) d -= 360;
+      if (d < -180) d += 360;
+      return (a + d * t + 360) % 360;
+    }
+    function angleInFov(tagAzDeg, cameraAzDeg, fovDeg) {
+      let diff = Math.abs((tagAzDeg - cameraAzDeg + 540) % 360 - 180);
+      return diff <= fovDeg / 2;
+    }
+
+    const socket = io();
+    socket.on('connect', () => {
+      startStream();
+      socket.emit('start_camera', {});
+    });
+    btnStartCam.addEventListener('click', () => {
+      socket.emit('start_camera', {});
+      startStream();
+    });
+    btnStopCam.addEventListener('click', () => socket.emit('stop_camera'));
+    socket.on('state', (s) => {
+      const on = s.connected;
+      dot.classList.toggle('connected', on);
+      statusText.textContent = on ? 'Connected ' + (s.port || '') : (s.error || 'Disconnected');
+      if (!on && !autoConnectAttempted) {
+        autoConnectAttempted = true;
+        statusText.textContent = 'Scanning ports...';
+        socket.emit('auto_connect', { baud: 921600 });
+      }
+    });
+    socket.on('connect_serial_result', (r) => { if (!r.ok) statusText.textContent = 'Failed: ' + (r.port || ''); });
+    socket.on('imu', (imu) => {
+      let yaw = imu.yaw;
+      if (yaw < 0) yaw += 360;
+      let heading = (yaw % 360 + 360) % 360;
+      if (smoothedHeading === null) smoothedHeading = heading;
+      else {
+        let delta = heading - (smoothedHeading % 360 + 360) % 360;
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+        smoothedHeading += delta;
+      }
+      compassDeg = ((smoothedHeading % 360) + 360) % 360;
+      updateApriltagThreeValues();
+    });
+    socket.on('pan_tilt', (pt) => {
+      gimbalPan = pt.pan;
+      gimbalTilt = pt.tilt;
+      updateApriltagThreeValues();
+      if (panSlider) panSlider.value = gimbalPan;
+      if (tiltSlider) tiltSlider.value = gimbalTilt;
+      if (panVal) panVal.textContent = Math.round(gimbalPan);
+      if (tiltVal) tiltVal.textContent = Math.round(gimbalTilt);
+    });
+    const streamStats = document.getElementById('streamStats');
+    const apriltagThreeValues = document.getElementById('apriltagThreeValues');
+    function updateApriltagThreeValues() {
+      if (!apriltagThreeValues) return;
+      const displayGyro = (compassDeg + gyroCalOffset + 360) % 360;
+      const gyro = (compassDeg != null && !isNaN(compassDeg)) ? Math.round(displayGyro) : '—';
+      const gimbal = (gimbalPan != null && !isNaN(gimbalPan)) ? Math.round(gimbalPan) : '—';
+      let tagStr = '—';
+      const t = liveTags.find(x => x.tag_id === NORTH_MARKER_TAG_ID);
+      if (t && t.azimuth != null) tagStr = Math.round(t.azimuth) + '°';
+      else {
+        const cached = tagPositionCache[String(NORTH_MARKER_TAG_ID)];
+        if (cached && cached.azimuth != null) tagStr = Math.round(cached.azimuth) + '°';
+      }
+      const inViewIds = liveTags.map(x => x.tag_id).filter(x => x != null);
+      const inViewStr = inViewIds.length ? inViewIds.join(', ') : '—';
+      apriltagThreeValues.innerHTML = '1. Gyro: ' + gyro + '° &nbsp; 2. Gimbal: ' + gimbal + '° &nbsp; 3. Tag: ' + tagStr + ' &nbsp; 4. In view: ' + inViewStr;
+    }
+    socket.on('tags_live', (d) => {
+      liveTags = Array.isArray(d.tags) ? d.tags : [];
+      const ids = liveTags.map(t => t.tag_id != null ? t.tag_id : '?');
+      const tagDesc = liveTags.map(t => {
+        const id = t.tag_id != null ? t.tag_id : '?';
+        const ft = t.distance_ft != null ? ` ${t.distance_ft} ft` : '';
+        return `Tag ${id}${ft}`;
+      }).join(', ');
+      if (streamTags) { streamTags.textContent = ''; }
+      const fps = d.fps != null ? d.fps : '--';
+      const tagsStr = ids.length ? ids.join(', ') : 'none';
+      const distStr = liveTags.some(t => t.distance_ft != null) ? liveTags.map(t => t.distance_ft).filter(x => x != null).join('/') + ' ft' : '';
+      streamStats.textContent = `FPS: ${fps}  Tags: ${tagsStr}` + (distStr ? `  Distance: ${distStr}` : '');
+      const liveSet = new Set(liveTags.map(t => t.tag_id).filter(x => x != null));
+      if (trackTagEnabled && trackTagScanning && liveSet.has(NORTH_MARKER_TAG_ID)) {
+        const t = liveTags.find(x => x.tag_id === NORTH_MARKER_TAG_ID);
+        if (t && t.azimuth != null) {
+          trackTagLockedAzimuth = t.azimuth;
+          trackTagScanning = false;
+          if (btnTrackTag) btnTrackTag.textContent = 'Stop tracking';
+        }
+      }
+      const northTag = liveTags.find(x => x.tag_id === NORTH_MARKER_TAG_ID);
+      if (northTag && northTag.azimuth != null) {
+        const tagAz = northTag.azimuth;
+        gyroCalOffset = blendAngle(gyroCalOffset, gimbalPan - tagAz, 0.12);
+        const prev = northTagAzimuthForDisplay != null ? northTagAzimuthForDisplay : tagAz;
+        northTagAzimuthForDisplay = blendAngle(prev, tagAz, 0.15);
+      }
+      liveTags.forEach((t) => {
+        const tid = t.tag_id;
+        if (tid == null) return;
+        const tidStr = String(tid);
+        const liveAz = (t.azimuth != null ? t.azimuth : (compassDeg + gimbalPan + 360) % 360);
+        const prev = tagPositionCache[tidStr];
+        let az = (tagAzimuths[tidStr] != null && tagAzimuths[tidStr] !== undefined)
+          ? tagAzimuths[tidStr]
+          : (prev && prev.azimuth != null ? prev.azimuth : liveAz);
+        const wpx = t.width_px != null ? t.width_px : (prev && prev.width_px != null ? prev.width_px : null);
+        tagPositionCache[tidStr] = { azimuth: az, inView: true, width_px: wpx };
+      });
+      Object.keys(tagPositionCache).forEach((tidStr) => {
+        if (!liveSet.has(parseInt(tidStr, 10))) {
+          tagPositionCache[tidStr].inView = false;
+        }
+      });
+      updateApriltagThreeValues();
+    });
+    socket.on('camera_config', (d) => { if (d.fov_h != null && d.fov_h > 0) cameraFov = d.fov_h; });
+    const fovCalibStatus = document.getElementById('fovCalibStatus');
+    const fovCalibResult = document.getElementById('fovCalibResult');
+    const btnCalibrateFov = document.getElementById('btnCalibrateFov');
+    socket.on('fov_calibration_status', (d) => {
+      fovCalibStatus.textContent = d.msg || '';
+      if (btnCalibrateFov) btnCalibrateFov.disabled = !!d.running;
+    });
+    socket.on('fov_calibration_progress', (d) => {
+      fovCalibStatus.textContent = 'Pan ' + (d.step || 0) + '/' + (d.total || 0) + ' (pan ' + (d.pan != null ? Math.round(d.pan) : '—') + '°)';
+    });
+    socket.on('fov_calibration_result', (d) => {
+      if (d.ok && d.results && d.results.length) {
+        const lines = d.results.map(r =>
+          'Tag ' + r.tag_id + ': FOV = ' + r.fov_deg + '° (pan ' + r.pan_first + '°→' + r.pan_last + '°) | tag ' + (r.tag_width_px_avg || '—') + ' px, ' + (r.visible_count || 0) + ' detections @ 8 ft'
+        );
+        fovCalibResult.textContent = lines.join('; ');
+        fovCalibResult.style.color = 'var(--ok)';
+      } else {
+        fovCalibResult.textContent = d.error || 'No tag data';
+        fovCalibResult.style.color = 'var(--err)';
+      }
+    });
+    socket.on('map', (d) => {
+      tagAzimuths = {};
+      (d.tags || []).forEach(t => {
+        const tidStr = String(t.tag_id);
+        tagAzimuths[tidStr] = t.azimuth;
+        if (tagPositionCache[tidStr]) {
+          tagPositionCache[tidStr].azimuth = t.azimuth;
+        } else {
+          tagPositionCache[tidStr] = { azimuth: t.azimuth, inView: false, width_px: null };
+        }
+      });
+      drawRadar();
+    });
+    socket.on('log', appendLog);
+    socket.on('log_backlog', (d) => {
+      (d.logs || []).forEach(appendLog);
+    });
+    let streamPollId = null;
+    function startStream() {
+      streamPlaceholder.textContent = 'Connecting camera…';
+      streamPlaceholder.style.display = 'none';
+      streamFrame.style.display = 'none';
+      streamImg.style.display = 'block';
+      streamImg.onerror = null;
+      const base = window.location.origin;
+      function pollFrame() {
+        streamImg.src = base + '/api/frame?t=' + Date.now();
+      }
+      if (streamPollId) clearInterval(streamPollId);
+      pollFrame();
+      streamPollId = setInterval(pollFrame, 20);
+      btnStartCam.style.display = 'none';
+      btnStopCam.style.display = 'inline-block';
+    }
+    function stopStream() {
+      if (streamPollId) { clearInterval(streamPollId); streamPollId = null; }
+      streamImg.src = '';
+      streamFrame.src = 'about:blank';
+      streamPlaceholder.style.display = 'flex';
+      streamPlaceholder.textContent = 'Stream stopped.';
+      streamImg.style.display = 'none';
+      streamFrame.style.display = 'none';
+      streamStats.textContent = '';
+      btnStartCam.style.display = 'inline-block';
+      btnStopCam.style.display = 'none';
+      camDot.classList.remove('connected');
+      camStatus.textContent = 'Disconnected';
+      camResFps.textContent = '';
+    }
+    document.getElementById('btnReconnect').addEventListener('click', () => {
+      autoConnectAttempted = true;
+      statusText.textContent = 'Scanning ports...';
+      socket.emit('auto_connect', { baud: 921600 });
+    });
+    document.getElementById('btnRestartBackend').addEventListener('click', () => {
+      fetch(window.location.origin + '/api/restart', { method: 'POST' })
+        .then(() => { statusText.textContent = 'Restarting...'; setTimeout(() => location.reload(), 3000); })
+        .catch(() => setTimeout(() => location.reload(), 3000));
+    });
+    socket.on('auto_connect_result', (r) => {
+      if (r.ok) {
+        statusText.textContent = 'Connected ' + (r.port || '');
+        if (r.fw_info) statusText.textContent += ' (model ' + (r.fw_info.model_id || '') + ')';
+      } else {
+        statusText.textContent = 'No gimbal found (model_id=99)';
+      }
+    });
+    socket.on('fw_info', (fw) => {
+      if (fw && statusText.textContent.indexOf('Connected') === 0)
+        statusText.textContent += ' model ' + (fw.model_id ?? '?');
+    });
+
+    function sendPanTilt() {
+      const pan = panSlider ? parseFloat(panSlider.value) : gimbalPan;
+      const tilt = tiltSlider ? parseFloat(tiltSlider.value) : gimbalTilt;
+      gimbalPan = pan;
+      gimbalTilt = tilt;
+      if (panVal) panVal.textContent = Math.round(pan);
+      if (tiltVal) tiltVal.textContent = Math.round(tilt);
+      socket.emit('set_pan_tilt', { pan, tilt });
+    }
+    if (panSlider) panSlider.addEventListener('input', () => { gimbalPan = parseFloat(panSlider.value); if (panVal) panVal.textContent = Math.round(gimbalPan); sendPanTilt(); });
+    if (tiltSlider) tiltSlider.addEventListener('input', () => { gimbalTilt = parseFloat(tiltSlider.value); if (tiltVal) tiltVal.textContent = Math.round(gimbalTilt); sendPanTilt(); });
+    document.getElementById('btnHome').addEventListener('click', () => {
+      gimbalPan = 0;
+      gimbalTilt = 42;
+      if (panSlider) panSlider.value = 0;
+      if (tiltSlider) tiltSlider.value = 42;
+      if (panVal) panVal.textContent = 0;
+      if (tiltVal) tiltVal.textContent = 42;
+      socket.emit('set_pan_tilt', { pan: 0, tilt: 42 });
+    });
+    const btnTrackTag = document.getElementById('btnTrackTag');
+    let trackTagScanDirection = 1;
+    function updateTrackTagState() {
+      if (!btnTrackTag) return;
+      if (trackTagEnabled) {
+        btnTrackTag.textContent = trackTagScanning ? 'Scanning…' : 'Stop tracking';
+        btnTrackTag.classList.add('active');
+      } else {
+        btnTrackTag.textContent = 'Keep in view';
+        btnTrackTag.classList.remove('active');
+      }
+    }
+    function runTrackTag() {
+      const trackTagId = NORTH_MARKER_TAG_ID;
+
+      if (trackTagScanning) {
+        if (trackTagScanPositions.length === 0) {
+          for (let p = -55; p <= 55; p += 10) trackTagScanPositions.push(p);
+        }
+        const targetPan = trackTagScanPositions[trackTagScanIndex];
+        gimbalPan = targetPan;
+        if (panSlider) panSlider.value = targetPan;
+        if (panVal) panVal.textContent = Math.round(targetPan);
+        socket.emit('set_pan_tilt', { pan: targetPan, tilt: gimbalTilt });
+        trackTagScanIndex += trackTagScanDirection;
+        if (trackTagScanIndex >= trackTagScanPositions.length - 1) trackTagScanDirection = -1;
+        if (trackTagScanIndex <= 0) trackTagScanDirection = 1;
+        updateTrackTagState();
+        return;
+      }
+
+      if (trackTagLockedAzimuth == null) return;
+      // When tag visible: use live azimuth and update last-known; when not visible: target last-known only (no move from loss of tag)
+      const t = liveTags.find(x => x.tag_id === trackTagId);
+      const tagVisible = t && t.azimuth != null;
+      if (tagVisible) trackTagLockedAzimuth = t.azimuth;
+      const tagAz = trackTagLockedAzimuth;
+      let desiredPan = (tagAz - compassDeg - TRACK_PAN_ZERO_OFFSET + 540) % 360 - 180;
+      desiredPan = Math.max(-180, Math.min(180, desiredPan));
+      desiredPan = TRACK_PAN_SIGN * desiredPan;
+      let angleDelta = desiredPan - gimbalPan;
+      if (angleDelta > 180) angleDelta -= 360;
+      if (angleDelta < -180) angleDelta += 360;
+      const absDelta = Math.abs(angleDelta);
+      const minBlend = 0.06;
+      const maxBlend = 0.42;
+      const blend = minBlend + (maxBlend - minBlend) * Math.min(absDelta / 25, 1);
+      let smoothedPan = gimbalPan + blend * angleDelta;
+      smoothedPan = Math.max(-180, Math.min(180, smoothedPan));
+      gimbalPan = smoothedPan;
+      if (panSlider) panSlider.value = smoothedPan;
+      if (panVal) panVal.textContent = Math.round(smoothedPan);
+      socket.emit('set_pan_tilt', { pan: smoothedPan, tilt: gimbalTilt });
+    }
+    function startTracking() {
+      const trackTagId = NORTH_MARKER_TAG_ID;
+      const tidStr = String(trackTagId);
+      const inLive = liveTags.some(t => t.tag_id === trackTagId);
+      if (inLive) {
+        const t = liveTags.find(t => t.tag_id === trackTagId);
+        if (t && t.azimuth != null) {
+          trackTagLockedAzimuth = t.azimuth;
+          trackTagScanning = false;
+        }
+      } else {
+        trackTagLockedAzimuth = null;
+        trackTagScanning = true;
+        trackTagScanPositions = [];
+        trackTagScanIndex = 0;
+        trackTagScanDirection = 1;
+      }
+      runTrackTag();
+      trackTagIntervalId = setInterval(runTrackTag, 150);
+      updateTrackTagState();
+    }
+    if (btnTrackTag) {
+      btnTrackTag.addEventListener('click', () => {
+        if (trackTagEnabled) {
+          trackTagEnabled = false;
+          trackTagLockedAzimuth = null;
+          trackTagScanning = false;
+          if (trackTagIntervalId) {
+            clearInterval(trackTagIntervalId);
+            trackTagIntervalId = null;
+          }
+        } else {
+          trackTagEnabled = true;
+          startTracking();
+        }
+        updateTrackTagState();
+      });
+    }
+    if (btnCalibrateFov) btnCalibrateFov.addEventListener('click', () => {
+      fovCalibResult.textContent = '';
+      fovCalibStatus.textContent = 'Starting…';
+      socket.emit('start_fov_calibration', {});
+    });
+    function setCamResFps(w, h, fps) {
+      if (w && h) camResFps.textContent = w + '\u00d7' + h + ' @ ' + (fps || 0) + 'fps';
+      else camResFps.textContent = '';
+    }
+    socket.on('camera_state', (s) => {
+      if (s.connected) {
+        camDot.classList.add('connected');
+        camStatus.textContent = 'Connected';
+        setCamResFps(s.width, s.height, s.fps);
+        streamStats.textContent = 'FPS: --  Tags: --';
+        btnStartCam.style.display = 'none';
+        btnStopCam.style.display = 'inline-block';
+        startStream();
+      }
+    });
+    socket.on('camera_result', (r) => {
+      if (r.action === 'stopped') {
+        camDot.classList.remove('connected');
+        camStatus.textContent = 'Disconnected';
+        camStatus.style.color = '';
+        camResFps.textContent = '';
+        stopStream();
+      } else if (r.ok) {
+        camDot.classList.add('connected');
+        camStatus.textContent = 'Connected';
+        camStatus.style.color = '';
+        setCamResFps(r.width, r.height, r.fps);
+        streamStats.textContent = 'FPS: --  Tags: --';
+        startStream();
+      } else {
+        camDot.classList.remove('connected');
+        camStatus.textContent = 'Failed' + (r.error ? ': ' + r.error : '');
+        camStatus.style.color = 'var(--err)';
+        stopStream();
+      }
+    });
+
+    function drawRadar() {
+      const ctx = radarCanvas.getContext('2d');
+      const w = radarCanvas.width;
+      const h = radarCanvas.height;
+      const cx = w / 2;
+      const cy = h / 2;
+      const r = Math.min(cx, cy) - 8;
+      ctx.fillStyle = '#0d1117';
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = '#30363d';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // N/E/S/W exactly at 0°/90°/180°/270° (compass degrees: 0=North=top, 90=East=right)
+      const labelOff = 14;
+      ctx.fillText('N', cx, cy - r - labelOff);
+      ctx.fillText('E', cx + r + labelOff, cy);
+      ctx.fillText('S', cx, cy + r + labelOff);
+      ctx.fillText('W', cx - r - labelOff, cy);
+      ctx.textBaseline = 'alphabetic';
+      const northOffsetDeg = northTagAzimuthForDisplay != null ? (360 - northTagAzimuthForDisplay) % 360 : 0;
+      const panSign = 1;
+      const lineOffsetDeg = 0;
+      const panZeroCenterDeg = 0;
+      // Compass degrees: 0 = North (top), 90 = East (right); same convention for tags and camera
+      function degToXY(deg, radiusPercent) {
+        const d = ((deg % 360) + 360) % 360;
+        const rad = (d - 90) * Math.PI / 180;
+        const rr = (radiusPercent != null ? radiusPercent : 1) * r;
+        return { x: cx + rr * Math.cos(rad), y: cy + rr * Math.sin(rad) };
+      }
+      function toDisplayAz(az) {
+        return ((az + northOffsetDeg) % 360 + 360) % 360;
+      }
+      // Camera direction: compass + pan; Pan 0 center offset so view center at gimbal 0 = middle of FOV
+      const cameraDeg = (toDisplayAz(compassDeg + panSign * gimbalPan + panZeroCenterDeg) + lineOffsetDeg + 360) % 360;
+      const robotDeg = toDisplayAz(compassDeg);
+      const fovDeg = (cameraFov > 10 && cameraFov < 180) ? cameraFov : 66;
+      const fovLegendEl = document.getElementById('fovLegendDeg');
+      if (fovLegendEl) fovLegendEl.textContent = Math.round(fovDeg);
+      // Blue FOV wedge first (so red line draws on top at center)
+      const wedgeR = r * 0.75;
+      const degToRad = (d) => (d - 90) * Math.PI / 180;
+      const startRad = degToRad((cameraDeg - fovDeg / 2 + 360) % 360);
+      const sweepRad = (fovDeg * Math.PI) / 180;
+      const endRad = startRad + sweepRad;
+      ctx.fillStyle = 'rgba(88, 166, 255, 0.25)';
+      ctx.strokeStyle = '#58a6ff';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.arc(cx, cy, wedgeR, startRad, endRad, false);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      // Dark blue line = camera center (middle of FOV); rotates when camera pans
+      const cameraCenter = degToXY(cameraDeg, 0.6);
+      ctx.strokeStyle = '#1f6feb';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(cameraCenter.x, cameraCenter.y);
+      ctx.stroke();
+      // Red line = through middle of robot (compass/forward direction)
+      const robotForward = degToXY(robotDeg, 0.6);
+      ctx.strokeStyle = '#f85149';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(robotForward.x, robotForward.y);
+      ctx.stroke();
+      // Robot = red rectangle at center; rotates with compass only (not gimbal pan)
+      const robotW = 14;
+      const robotH = 10;
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate((robotDeg - 90) * Math.PI / 180);
+      ctx.fillStyle = '#f85149';
+      ctx.fillRect(-robotW / 2, -robotH / 2, robotW, robotH);
+      ctx.strokeStyle = '#c92a2a';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(-robotW / 2, -robotH / 2, robotW, robotH);
+      ctx.restore();
+      // All known tags: box proportional to tag size (width_px), no circle
+      const northMarkerId = NORTH_MARKER_TAG_ID;
+      const allTagIds = new Set([...Object.keys(tagAzimuths).map(Number), ...Object.keys(tagPositionCache).map(Number)]);
+      const tagSizeScale = 0.45;
+      const tagSizeMin = 10;
+      const tagSizeMax = 36;
+      allTagIds.forEach((tid) => {
+        const tidStr = String(tid);
+        const rawAz = tagAzimuths[tidStr] != null ? tagAzimuths[tidStr] : (tagPositionCache[tidStr] && tagPositionCache[tidStr].azimuth);
+        if (rawAz == null) return;
+        const inView = tagPositionCache[tidStr] && tagPositionCache[tidStr].inView;
+        const az = (northMarkerId !== null && tid === northMarkerId) ? 0 : toDisplayAz(rawAz);
+        const widthPx = (tagPositionCache[tidStr] && tagPositionCache[tidStr].width_px != null) ? tagPositionCache[tidStr].width_px : 24;
+        const ap = degToXY(az, 0.72);
+        const boxSize = Math.round(Math.max(tagSizeMin, Math.min(tagSizeMax, widthPx * tagSizeScale)));
+        const half = boxSize / 2;
+        ctx.fillStyle = inView ? '#3fb950' : '#d29922';
+        ctx.fillRect(ap.x - half, ap.y - half, boxSize, boxSize);
+        ctx.strokeStyle = inView ? '#7ee787' : '#e3b341';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(ap.x - half, ap.y - half, boxSize, boxSize);
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold ' + Math.max(10, Math.min(14, boxSize - 4)) + 'px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('' + tid, ap.x, ap.y);
+      });
+    }
+    setInterval(drawRadar, 100);
+  </script>
+</body>
+</html>

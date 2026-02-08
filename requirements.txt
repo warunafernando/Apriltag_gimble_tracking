@@ -1,0 +1,5 @@
+opencv-python>=4.5
+apriltag>=0.0.16
+pyserial>=3.5
+flask>=2.0
+flask-socketio>=5.0
